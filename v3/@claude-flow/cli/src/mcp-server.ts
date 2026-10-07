@@ -57,6 +57,11 @@ export interface MCPServerOptions {
   daemonize?: boolean;
   timeout?: number;
   requestTimeoutMs?: number;
+  rateLimitPerIp?: number;
+  rateLimitWindowMs?: number;
+  rateLimitPerSession?: number;
+  rateLimitGlobalRps?: number;
+  rateLimitGlobalBurst?: number;
   /**
    * Bearer token every HTTP request must present (`Authorization: Bearer <token>`).
    * http transport only. Prefer RUFLO_MCP_HTTP_TOKEN / a token file over this
@@ -180,6 +185,18 @@ function processStartToken(pid: number): string | undefined {
   }
 }
 
+type RateLimitOption =
+  | 'rateLimitPerIp'
+  | 'rateLimitWindowMs'
+  | 'rateLimitPerSession'
+  | 'rateLimitGlobalRps'
+  | 'rateLimitGlobalBurst';
+
+function definedFields<T extends Record<string, number | undefined>>(fields: T): Partial<T> | undefined {
+  const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
+  return entries.length === 0 ? undefined : Object.fromEntries(entries) as Partial<T>;
+}
+
 /**
  * Hosts treated as same-machine-only for MCP HTTP tool-call authorization
  * purposes (see startHttpServer's non-loopback authorization gate below).
@@ -260,9 +277,11 @@ export function resolveMcpHttpAuthToken(
 }
 
 /**
- * Default configuration
+ * Default configuration. Rate limits are left unset so @claude-flow/mcp
+ * applies its own defaults.
  */
-type ResolvedMCPServerOptions = Required<Omit<MCPServerOptions, 'authToken'>> & { authToken?: string };
+type ResolvedMCPServerOptions = Required<Omit<MCPServerOptions, RateLimitOption | 'authToken'>> &
+  Pick<MCPServerOptions, RateLimitOption | 'authToken'>;
 
 const DEFAULT_OPTIONS: ResolvedMCPServerOptions = {
   transport: 'stdio',
@@ -1075,6 +1094,12 @@ export class MCPServerManager extends EventEmitter {
         enableMetrics: true,
         enableCaching: true,
         requestTimeout: this.options.requestTimeoutMs,
+        rateLimit: definedFields({ windowMs: this.options.rateLimitWindowMs, limit: this.options.rateLimitPerIp }),
+        sessionRateLimit: definedFields({
+          requestsPerSecond: this.options.rateLimitGlobalRps,
+          burstSize: this.options.rateLimitGlobalBurst,
+          perSessionLimit: this.options.rateLimitPerSession,
+        }),
         auth: authToken
           ? { enabled: true, method: 'token', tokens: [authToken] }
           : undefined,
